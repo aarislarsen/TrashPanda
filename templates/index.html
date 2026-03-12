@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TrashPanda</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/main.css" />
+</head>
+<body>
+  <!-- ── Header ─────────────────────────────────────────────────── -->
+  <header id="header">
+    <div class="logo">
+      <span class="logo-icon">🦝</span>
+      <span class="logo-text">TrashPanda</span>
+      <span class="logo-sub">PAT Validator &amp; Repository Explorer</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-ghost" id="btnNewScan">+ New Scan</button>
+    </div>
+  </header>
+
+  <!-- ── Main layout ────────────────────────────────────────────── -->
+  <div id="app">
+
+    <!-- Left panel: ingestion + valid tokens list -->
+    <aside id="sidebar">
+      <section class="panel" id="panelIngest">
+        <div class="panel-title">TOKEN INGESTION</div>
+
+        <div class="tab-row">
+          <button class="tab active" data-tab="paste">Paste</button>
+          <button class="tab" data-tab="file">File</button>
+        </div>
+
+        <div class="tab-content active" id="tabPaste">
+          <textarea id="tokenInput" placeholder="Paste tokens or raw tool output here…"></textarea>
+          <button class="btn btn-primary full-width" id="btnExtract">Extract &amp; Validate</button>
+        </div>
+        <div class="tab-content" id="tabFile">
+          <div class="drop-zone" id="dropZone">
+            <span>Drop file or <label class="link" for="fileInput">browse</label></span>
+            <input type="file" id="fileInput" accept=".txt,.json,.csv,.log,.xml,.yml,.yaml" hidden />
+          </div>
+          <div id="fileName" class="filename-label"></div>
+          <button class="btn btn-primary full-width" id="btnExtractFile" disabled>Extract &amp; Validate</button>
+        </div>
+      </section>
+
+      <!-- Endpoints config -->
+      <section class="panel" id="panelEndpoints">
+        <div class="panel-title">ENDPOINTS</div>
+        <div id="endpointList">
+          <div class="endpoint-item" data-url="https://api.github.com">
+            <span class="ep-dot checking"></span>
+            <span class="ep-label">github.com</span>
+            <span class="ep-url">api.github.com</span>
+            <button class="ep-remove" title="Remove">×</button>
+          </div>
+          <div class="endpoint-item" data-url="https://github.example.com/api/v3">
+            <span class="ep-dot checking"></span>
+            <span class="ep-label">GHE</span>
+            <span class="ep-url">github.example.com/api/v3</span>
+            <button class="ep-remove" title="Remove">×</button>
+          </div>
+        </div>
+        <div class="ep-add-row">
+          <input type="text" id="epInput" placeholder="https://ghe.corp.com/api/v3" />
+          <button class="btn btn-sm" id="btnAddEp">Add</button>
+        </div>
+      </section>
+
+      <!-- Valid token list -->
+      <section class="panel flex-grow" id="panelTokens">
+        <div class="panel-title">
+          VALID TOKENS
+          <span id="tokenCount" class="badge">0</span>
+        </div>
+        <div id="tokenList" class="token-list">
+          <div class="empty-state">No valid tokens yet</div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- Explorer columns (Commander-style) -->
+    <main id="explorer">
+      <div id="explorerColumns" class="columns-container">
+        <!-- Columns are dynamically injected here -->
+        <div class="explorer-placeholder">
+          <span class="ph-icon">🦝</span>
+          <span class="ph-text">Select a token to begin exploring</span>
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- ── Scan progress overlay ──────────────────────────────────── -->
+  <div id="scanOverlay" class="overlay hidden">
+    <div class="scan-modal">
+      <div class="scan-title">Scanning tokens…</div>
+      <div class="scan-bar-wrap"><div class="scan-bar" id="scanBar"></div></div>
+      <div class="scan-status" id="scanStatus">Initialising…</div>
+    </div>
+  </div>
+
+  <!-- ── Toast notifications ────────────────────────────────────── -->
+  <div id="toastContainer"></div>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/ui.js"></script>
+  <script src="/static/js/explorer.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
