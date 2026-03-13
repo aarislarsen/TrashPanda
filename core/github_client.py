@@ -150,16 +150,56 @@ def get_commits(token: str, api_base: str, owner: str, repo: str, path: str = ""
 
 
 def check_repo_permissions(token: str, api_base: str, owner: str, repo: str) -> Dict:
-    """Return repo permissions object from the API."""
+    """
+    Return repo permissions and default branch protection status.
+    Result keys:
+      permissions       - dict with pull/push/admin/maintain booleans
+      default_branch    - name of the default branch (e.g. 'main')
+      branch_protected  - True if the default branch has protection rules
+      can_write_default - True if token can push to the default branch
+                          (admin tokens bypass branch protection rules)
+    """
     s = _session(token)
-    url = f"{api_base.rstrip('/')}/repos/{owner}/{repo}"
+    base = api_base.rstrip('/')
+
+    # 1. Fetch repo metadata
     try:
-        r = s.get(url, timeout=TIMEOUT)
-        if r.status_code == 200:
-            return r.json().get("permissions", {})
+        r = s.get(f"{base}/repos/{owner}/{repo}", timeout=TIMEOUT)
+        if r.status_code != 200:
+            return {}
+        repo_data = r.json()
     except Exception:
-        pass
-    return {}
+        return {}
+
+    perms          = repo_data.get("permissions", {})
+    default_branch = repo_data.get("default_branch", "main")
+
+    # 2. Check branch protection on the default branch
+    # 403 = protected but token lacks permission to read rules (still protected)
+    # 404 = no protection rules configured
+    # 200 = protection rules exist and are readable
+    branch_protected = False
+    try:
+        bp_url = f"{base}/repos/{owner}/{repo}/branches/{default_branch}/protection"
+        bp = s.get(bp_url, timeout=TIMEOUT)
+        if bp.status_code in (200, 403):
+            branch_protected = True
+        elif bp.status_code == 404:
+            branch_protected = False
+    except Exception:
+        pass  # Treat as unprotected if call fails
+
+    # Admin tokens can disable protection rules — treat as full write access
+    can_write_default = (
+        (perms.get("push") or perms.get("maintain")) and not branch_protected
+    ) or perms.get("admin", False)
+
+    return {
+        "permissions":       perms,
+        "default_branch":    default_branch,
+        "branch_protected":  branch_protected,
+        "can_write_default": can_write_default,
+    }
 
 
 def _next_link(link_header: str) -> Optional[str]:

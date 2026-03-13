@@ -130,7 +130,10 @@ const TokenList = {
           <span class="token-login">${login}</span>
           <span class="token-type">${t.token_type || ''}</span>
         </div>
-        <div class="token-truncated">${truncateToken(t.token)}</div>
+        <div class="token-full" onclick="event.stopPropagation()">
+          <span class="token-value" title="Click to select">${t.token}</span>
+          <button class="token-copy" title="Copy to clipboard" onclick="event.stopPropagation(); navigator.clipboard.writeText('${t.token}').then(() => toast('Token copied', 'success', 1500))">⎘</button>
+        </div>
         <div class="token-scopes">${scopeTags || '<span class="scope-tag">no scopes</span>'}</div>
         <div class="token-endpoint">${t.endpoint.replace('https://','')}</div>
       `;
@@ -143,11 +146,6 @@ const TokenList = {
     });
   },
 };
-
-function truncateToken(token) {
-  if (token.length <= 12) return token;
-  return token.slice(0, 6) + '…' + token.slice(-4);
-}
 
 // ── Boot ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {

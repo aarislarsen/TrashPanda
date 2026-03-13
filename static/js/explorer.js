@@ -88,7 +88,8 @@ const Explorer = (() => {
 
     try {
       const data = await API.repos(_token, _endpoint);
-      _renderRepos(col, data.repos || []);
+      const repos = data.repos || [];
+      _renderRepos(col, repos);
     } catch (e) {
       col.querySelector('.col-body').innerHTML =
         `<div class="col-loading" style="color:var(--red)">Error: ${e.message}</div>`;
@@ -96,6 +97,10 @@ const Explorer = (() => {
   }
 
   function _renderRepos(col, repos) {
+    // Update column title to include count
+    col.querySelector('.col-header span:first-child').textContent =
+      `🗂 REPOSITORIES (${repos.length})`;
+
     if (!repos.length) {
       col.querySelector('.col-body').innerHTML = '<div class="empty-state">No accessible repositories</div>';
       return;
@@ -194,17 +199,28 @@ const Explorer = (() => {
 
     try {
       const data = await API.file(_token, _endpoint, owner, repo, path);
-      const perms = data.permissions || {};
-      const canWrite = perms.push || perms.admin;
+      const perms            = data.permissions || {};
+      const p                = perms.permissions || {};
+      const canWrite         = p.push || p.admin || p.maintain;
+      const canWriteDefault  = perms.can_write_default;
+      const branchProtected  = perms.branch_protected;
+      const defaultBranch    = perms.default_branch || 'main';
 
       if (canWrite) {
-        col.classList.add('writable');
-        col.querySelector('.col-header').insertAdjacentHTML('beforeend',
-          '<span class="writable-badge">⚠ WRITE ACCESS</span>');
+        if (canWriteDefault) {
+          // Red — can push directly to default branch (or is admin)
+          col.classList.add('writable');
+          col.querySelector('.col-header').insertAdjacentHTML('beforeend',
+            `<span class="writable-badge">⚠ WRITE ACCESS</span>`);
+        } else {
+          // Orange — write access but default branch is protected
+          col.classList.add('writable-protected');
+          col.querySelector('.col-header').insertAdjacentHTML('beforeend',
+            `<span class="writable-badge protected">⚠ WRITE (${_esc(defaultBranch)} protected)</span>`);
+        }
       }
 
       _renderPreviewContent(col, data.file, null);
-      // Auto-load commit history to the right; pass preview col ref for updates
       loadCommits(owner, repo, path, colIndex + 1, col, canWrite);
     } catch (e) {
       col.querySelector('.col-body').innerHTML =
@@ -318,10 +334,8 @@ const Explorer = (() => {
           }
           _renderPreviewContent(previewCol, fileData, idx === 0 ? null : sha);
 
-          // Re-apply writable border if needed
-          if (canWrite) {
-            previewCol.classList.add('writable');
-          }
+          // Re-apply write access styling (classes set by loadFilePreview persist)
+          // Nothing to do — classes are on the column element and survive content refresh
         } catch (e) {
           previewCol.querySelector('.col-body').innerHTML =
             `<div class="col-loading" style="color:var(--red)">Error: ${e.message}</div>`;
