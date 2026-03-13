@@ -23,7 +23,12 @@ def _session(token: str) -> requests.Session:
 def validate_token(token: str, api_base: str) -> Dict[str, Any]:
     """
     Validate a PAT against api_base (e.g. https://api.github.com).
-    Returns a dict with: valid, user, scopes, headers, error.
+    Returns a dict with: valid, user, scopes, token_type, error.
+
+    Rate limit is intentionally not fetched here — validate_token is called
+    concurrently for every candidate, so fetching rate_limit per token would
+    double the number of outbound requests.  Callers that need rate_limit
+    data should call _get_rate_limit() separately after validation.
     """
     s = _session(token)
     url = f"{api_base.rstrip('/')}/user"
@@ -48,7 +53,6 @@ def validate_token(token: str, api_base: str) -> Dict[str, Any]:
         "user": user_data,
         "scopes": scopes,
         "token_type": _classify_token(token),
-        "rate_limit": _get_rate_limit(s, api_base),
     }
 
 
@@ -78,30 +82,50 @@ def _get_rate_limit(session: requests.Session, api_base: str) -> Optional[Dict]:
     return None
 
 
-def list_repos(token: str, api_base: str) -> List[Dict]:
-    """Return all repos accessible to the token (handles pagination)."""
+_MAX_REPO_PAGES = 10  # cap at 1 000 repos (10 pages × 100 per page)
+
+
+def list_repos(token: str, api_base: str):
+    """
+    Return repos accessible to the token, with pagination.
+
+    Returns (repos: List[Dict], truncated: bool).
+    Capped at _MAX_REPO_PAGES pages to prevent runaway requests against
+    machine-user tokens with access to thousands of repositories.
+    """
     s = _session(token)
-    repos = []
-    url = f"{api_base.rstrip('/')}/user/repos?per_page=100&sort=updated"
-    while url:
+    repos: List[Dict] = []
+    url: Optional[str] = f"{api_base.rstrip('/')}/user/repos?per_page=100&sort=updated"
+    pages = 0
+    while url and pages < _MAX_REPO_PAGES:
         try:
             r = s.get(url, timeout=TIMEOUT)
             if r.status_code != 200:
                 break
             repos.extend(r.json())
             url = _next_link(r.headers.get("Link", ""))
+            pages += 1
         except requests.RequestException:
             break
-    return repos
+    truncated = url is not None  # a next page exists beyond the cap
+    return repos, truncated
 
 
 def list_orgs(token: str, api_base: str) -> List[Dict]:
+    """Return all orgs accessible to the token (handles pagination)."""
     s = _session(token)
-    try:
-        r = s.get(f"{api_base.rstrip('/')}/user/orgs?per_page=100", timeout=TIMEOUT)
-        return r.json() if r.status_code == 200 else []
-    except Exception:
-        return []
+    orgs: List[Dict] = []
+    url: Optional[str] = f"{api_base.rstrip('/')}/user/orgs?per_page=100"
+    while url:
+        try:
+            r = s.get(url, timeout=TIMEOUT)
+            if r.status_code != 200:
+                break
+            orgs.extend(r.json())
+            url = _next_link(r.headers.get("Link", ""))
+        except Exception:
+            break
+    return orgs
 
 
 def list_repo_contents(token: str, api_base: str, owner: str, repo: str, path: str = "") -> Any:
@@ -116,16 +140,87 @@ def list_repo_contents(token: str, api_base: str, owner: str, repo: str, path: s
 
 
 def get_file_content(token: str, api_base: str, owner: str, repo: str, path: str, ref: str = None) -> Dict:
-    """Fetch raw decoded content of a file, optionally at a specific commit ref."""
+    """
+    Fetch raw decoded content of a file, optionally at a specific commit ref.
+
+    The Contents API (/repos/.../contents/...) is tried first.  If the file
+    exceeds 1 MB GitHub returns 403 with a specific message; in that case we
+    fall back to the Git Blobs API (/repos/.../git/blobs/:sha) which supports
+    files up to 100 MB.
+    """
     import base64
     s = _session(token)
-    url = f"{api_base.rstrip('/')}/repos/{owner}/{repo}/contents/{path}"
+    base = api_base.rstrip('/')
+
+    url = f"{base}/repos/{owner}/{repo}/contents/{path}"
     if ref:
         url += f"?ref={ref}"
+
     try:
         r = s.get(url, timeout=TIMEOUT)
+    except Exception as e:
+        return {"error": str(e)}
+
+    # GitHub returns 403 + specific message when file exceeds 1 MB via Contents API
+    if r.status_code == 403:
+        try:
+            msg = r.json().get("message", "")
+        except Exception:
+            msg = ""
+        if "1 MB" in msg or "too large" in msg.lower() or "blob" in msg.lower():
+            return _get_large_file(s, base, owner, repo, path, ref)
+        return {"error": f"HTTP 403 — {msg or 'Forbidden'}"}
+
+    if r.status_code != 200:
+        return {"error": f"HTTP {r.status_code}"}
+
+    data = r.json()
+
+    # Contents API may also return size field indicating truncation risk
+    if isinstance(data, dict) and data.get("size", 0) > 1_000_000 and not data.get("content"):
+        return _get_large_file(s, base, owner, repo, path, ref)
+
+    if data.get("encoding") == "base64":
+        try:
+            data["decoded"] = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+        except Exception:
+            data["decoded"] = None
+    return data
+
+
+def _get_large_file(session: requests.Session, base: str, owner: str, repo: str, path: str, ref: Optional[str]) -> Dict:
+    """
+    Fetch a file that exceeds the 1 MB Contents API limit using the Git Blobs API.
+    Requires resolving the blob SHA first via the Trees API.
+    """
+    import base64
+
+    # Step 1: get the tree SHA for the given ref (or HEAD)
+    ref_param = ref or "HEAD"
+    try:
+        r = session.get(
+            f"{base}/repos/{owner}/{repo}/git/trees/{ref_param}?recursive=1",
+            timeout=TIMEOUT,
+        )
         if r.status_code != 200:
-            return {"error": f"HTTP {r.status_code}"}
+            return {"error": f"Large file: could not fetch tree (HTTP {r.status_code})"}
+        tree = r.json().get("tree", [])
+    except Exception as e:
+        return {"error": f"Large file: tree fetch failed — {e}"}
+
+    # Step 2: find the blob SHA for our path
+    blob_sha = next((item["sha"] for item in tree if item.get("path") == path), None)
+    if not blob_sha:
+        return {"error": f"Large file: path '{path}' not found in tree"}
+
+    # Step 3: fetch the blob
+    try:
+        r = session.get(
+            f"{base}/repos/{owner}/{repo}/git/blobs/{blob_sha}",
+            timeout=TIMEOUT,
+        )
+        if r.status_code != 200:
+            return {"error": f"Large file: blob fetch failed (HTTP {r.status_code})"}
         data = r.json()
         if data.get("encoding") == "base64":
             try:
@@ -134,7 +229,7 @@ def get_file_content(token: str, api_base: str, owner: str, repo: str, path: str
                 data["decoded"] = None
         return data
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Large file: blob fetch failed — {e}"}
 
 
 def get_commits(token: str, api_base: str, owner: str, repo: str, path: str = "", per_page: int = 20) -> List[Dict]:
@@ -203,9 +298,14 @@ def check_repo_permissions(token: str, api_base: str, owner: str, repo: str) -> 
 
 
 def _next_link(link_header: str) -> Optional[str]:
-    """Parse RFC 5988 Link header for 'next' relation."""
-    for part in link_header.split(","):
-        parts = part.strip().split(";")
-        if len(parts) == 2 and 'rel="next"' in parts[1]:
-            return parts[0].strip().strip("<>")
+    """
+    Parse an RFC 5988 Link header and return the URL for rel="next", or None.
+
+    The old implementation split on ',' which breaks when a URL contains a
+    comma in its query string.  Using a regex to match each <url>; rel="next"
+    pair directly is safe against that.
+    """
+    import re
+    for m in re.finditer(r'<([^>]+)>\s*;[^,]*\brel="next"', link_header):
+        return m.group(1)
     return None

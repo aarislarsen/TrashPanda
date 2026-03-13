@@ -62,11 +62,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('fileName').textContent = '';
     pendingFileText = null;
     document.getElementById('btnExtractFile').disabled = true;
-    document.getElementById('explorerColumns').innerHTML = `
-      <div class="explorer-placeholder">
-        <span class="ph-icon">🦝</span>
-        <span class="ph-text">Select a token to begin exploring</span>
-      </div>`;
+    // Issue 7: do not wipe explorerColumns innerHTML directly — that orphans
+    // the DOM nodes that are still referenced in Explorer._cols, leaving the
+    // internal column array stale.  clearRepos() goes through _clearFrom(0)
+    // which removes each column and empties _cols correctly.
+    Explorer.clearRepos();
     toast('Cleared', 'info');
   });
 

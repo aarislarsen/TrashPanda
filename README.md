@@ -36,7 +36,8 @@ Each candidate is validated against all configured endpoints by calling the GitH
 - **GitHub username** associated with the token
 - **Token type** (fine-grained, classic, OAuth, etc.)
 - **OAuth scopes** granted (e.g. `repo`, `read:org`, `admin:org`)
-- **Rate limit** remaining
+
+Fine-grained PATs do not expose scope information via the GitHub API — the token type is shown with a note rather than an empty scope list.
 
 The full token value is displayed in each entry and can be copied to the clipboard with the ⎘ button.
 
@@ -58,10 +59,15 @@ Valid tokens are listed in the left panel. Clicking a token opens a Commander-st
 [Repositories] → [Files] → [File Preview] → [Commit History]
 ```
 
-- **Repositories** — all repos accessible to the token, with a count in the column header, showing visibility, fork status, star count, and language
+- **Repositories** — all repos accessible to the token, with a count in the column header, showing visibility, fork status, star count, and language. If a token has access to more than 1 000 repositories, a `⚠` notice is shown at the bottom of the list and the count is displayed as `1000+`.
 - **Files** — directory tree for the selected repo; directories expand into a new column
-- **File preview** — decoded file content with correct whitespace and line formatting
+- **File preview** — decoded file content with correct whitespace and line formatting. Files larger than 1 MB are fetched via the Git Blobs API automatically.
 - **Commit history** — the last 20 commits scoped to the selected file; clicking a commit loads that version of the file in the preview pane
+
+### Multi-token comparison (diff mode)
+**Ctrl+click** (or **Cmd+click** on macOS) to select multiple tokens simultaneously. When two or more tokens are selected, the explorer switches to diff mode and shows only the repositories that are **not** shared between all selected tokens — i.e. the symmetric difference of their accessible repo sets.
+
+Each entry in the diff list shows which token(s) can access it. Clicking a repo uses the appropriate token to browse its contents. If any token's repo fetch fails during a diff, the failed tokens are flagged individually via toast notification and the diff proceeds with the remaining tokens.
 
 ### Write access indicators
 
@@ -91,6 +97,14 @@ python3 app.py
 ```
 
 Then open `http://localhost:5000` in your browser. If running in WSL, use `http://localhost:5000` from Windows — Flask binds to `0.0.0.0` so it is reachable from the Windows host.
+
+### Debug mode
+
+Debug mode is **off by default**. The Werkzeug interactive debugger allows arbitrary code execution if the PIN is obtained, and this tool binds to `0.0.0.0`. Only enable it explicitly during development:
+
+```bash
+TRASHPANDA_DEBUG=1 python3 app.py
+```
 
 ---
 
@@ -127,7 +141,7 @@ Valid tokens appear in the **VALID TOKENS** panel on the left. Each entry shows:
 - GitHub username
 - Token type
 - Full token value (selectable; copy with the ⎘ button)
-- Granted scopes (write-level scopes highlighted amber, admin scopes red)
+- Granted scopes (write-level scopes highlighted amber, admin scopes red). Fine-grained PATs display a note instead of a scope list — GitHub does not expose their permissions via the API.
 - Which endpoint the token was valid against
 
 ### 4. Explore repositories
@@ -137,6 +151,8 @@ Click a token to load its accessible repositories. Then:
 - Click a **file** to preview its contents and load its commit history
 - Click a **commit** to view that historical version of the file in the preview pane
 - A **red or orange border** on the preview pane indicates apparent write access — verify manually
+
+**Ctrl+click** multiple tokens in the list to enter diff mode and compare their repo access.
 
 ---
 
@@ -182,6 +198,8 @@ Always attempt the action directly to confirm actual access.
 - Binary files cannot be previewed
 - Commit history is capped at 20 entries per file
 - Token validation is capped at 50 candidates per scan; if a file produces more, a warning is shown and the first 50 are used
+- Repository lists are capped at 1 000 repos per token (10 pages × 100 per page); a notice is shown in the UI if this limit is reached
+- The diff view compares tokens by `full_name` only — tokens from different GitHub Enterprise instances may incorrectly match repos with the same name
 - The tool makes real API calls to GitHub — run it only against endpoints you are authorised to test
 
 ---

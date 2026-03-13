@@ -2,6 +2,9 @@
 app.py
 TrashPanda — GitHub PAT validator and repository explorer.
 Run: python app.py
+
+Debug mode is off by default. Opt in with:
+    TRASHPANDA_DEBUG=1 python app.py
 """
 
 import sys
@@ -28,6 +31,9 @@ def create_app() -> Flask:
 
 
 if __name__ == "__main__":
+    # Issue 10: never enable the Werkzeug interactive debugger unconditionally.
+    # It allows arbitrary Python execution if the PIN is obtained, and this app
+    # binds to 0.0.0.0 making it reachable on the local network.
+    debug = os.environ.get("TRASHPANDA_DEBUG", "0") == "1"
     app = create_app()
-    # Bind to 0.0.0.0 so WSL port is reachable from Windows browser
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=debug)

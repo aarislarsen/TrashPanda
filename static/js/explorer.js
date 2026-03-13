@@ -89,17 +89,18 @@ const Explorer = (() => {
     try {
       const data = await API.repos(_token, _endpoint);
       const repos = data.repos || [];
-      _renderRepos(col, repos);
+      _renderRepos(col, repos, data.truncated);
     } catch (e) {
       col.querySelector('.col-body').innerHTML =
         `<div class="col-loading" style="color:var(--red)">Error: ${e.message}</div>`;
     }
   }
 
-  function _renderRepos(col, repos) {
+  function _renderRepos(col, repos, truncated) {
     // Update column title to include count
+    const countLabel = truncated ? `${repos.length}+` : repos.length;
     col.querySelector('.col-header span:first-child').textContent =
-      `🗂 REPOSITORIES (${repos.length})`;
+      `🗂 REPOSITORIES (${countLabel})`;
 
     if (!repos.length) {
       col.querySelector('.col-body').innerHTML = '<div class="empty-state">No accessible repositories</div>';
@@ -129,9 +130,15 @@ const Explorer = (() => {
       });
       body.appendChild(el);
     });
-  }
 
-  // ── Load directory contents ───────────────────────────────────────
+    // Fix 1: notify user if results were capped at the pagination limit
+    if (truncated) {
+      const notice = document.createElement('div');
+      notice.className = 'truncation-notice';
+      notice.textContent = '⚠ Results capped at 1 000 repos. Token may have access to more.';
+      body.appendChild(notice);
+    }
+  }
   async function loadContents(owner, repo, path, parentColIndex = 1) {
     _clearFrom(parentColIndex);
 
@@ -235,11 +242,17 @@ const Explorer = (() => {
   function _renderPreviewContent(col, fileData, ref) {
     const body = col.querySelector('.col-body');
 
-    // Update header path to show ref if viewing historical version
+    // Fix 7: set path text safely — never use innerHTML with path/ref values
     const pathEl = col.querySelector('.col-path');
     if (ref) {
-      pathEl.innerHTML = `${_esc(pathEl.dataset.basePath || pathEl.textContent)} <span style="color:var(--amber)">@ ${ref.slice(0,7)}</span>`;
-      pathEl.dataset.basePath = pathEl.dataset.basePath || pathEl.textContent;
+      // Preserve original base path on first ref view
+      if (!pathEl.dataset.basePath) pathEl.dataset.basePath = pathEl.textContent;
+      // Reset and rebuild: text node + styled SHA span
+      pathEl.textContent = pathEl.dataset.basePath + ' ';
+      const shaSpan = document.createElement('span');
+      shaSpan.style.color = 'var(--amber)';
+      shaSpan.textContent = `@ ${ref.slice(0, 7)}`;
+      pathEl.appendChild(shaSpan);
     } else {
       if (pathEl.dataset.basePath) pathEl.textContent = pathEl.dataset.basePath;
     }
@@ -346,5 +359,150 @@ const Explorer = (() => {
     });
   }
 
-  return { loadToken, loadContents, loadFilePreview, loadCommits };
+
+  // ── Clear repos column ────────────────────────────────────────────
+  function clearRepos() {
+    _clearFrom(0);
+    if (!document.querySelector('.explorer-placeholder')) {
+      _container().innerHTML = `
+        <div class="explorer-placeholder">
+          <span class="ph-icon">🦝</span>
+          <span class="ph-text">Select a token to begin exploring</span>
+        </div>`;
+    }
+  }
+
+  // ── Diff mode: show repos unique to each token ────────────────────
+  async function loadDiff(tokenObjs) {
+    _clearFrom(0);
+    const placeholder = document.querySelector('.explorer-placeholder');
+    if (placeholder) placeholder.remove();
+
+    const col = _makeCol('repos', '🗂 DIFF');
+    _appendCol(col);
+    col.querySelector('.col-body').innerHTML = _loading();
+
+    try {
+      // Fetch repo lists for all selected tokens in parallel
+      const results = await Promise.allSettled(
+        tokenObjs.map(t => API.repos(t.token, t.endpoint).then(d => ({
+          token: t,
+          repos: d.repos || [],
+          truncated: d.truncated || false,
+        })))
+      );
+
+      // Fix 4: use allSettled — partial failures show which token failed
+      const settled = results.map((r, idx) => {
+        if (r.status === 'fulfilled') return r.value;
+        return { token: tokenObjs[idx], repos: [], truncated: false, error: r.reason?.message || 'Failed' };
+      });
+
+      const anyError = settled.filter(s => s.error);
+      if (anyError.length) {
+        anyError.forEach(s => {
+          const login = s.token.user?.login || s.token.token.slice(0, 8);
+          toast(`Repo fetch failed for ${login}: ${s.error}`, 'error', 5000);
+        });
+      }
+
+      const succeeded = settled.filter(s => !s.error);
+      if (!succeeded.length) {
+        col.querySelector('.col-body').innerHTML =
+          `<div class="col-loading" style="color:var(--red)">All repo fetches failed</div>`;
+        return;
+      }
+
+      // Build map: full_name -> array of token logins that can access it
+      const repoMap = new Map();
+      succeeded.forEach(({ token, repos }) => {
+        repos.forEach(repo => {
+          if (!repoMap.has(repo.full_name)) {
+            repoMap.set(repo.full_name, { repo, tokens: [] });
+          }
+          repoMap.get(repo.full_name).tokens.push(token.user?.login || token.token.slice(0, 8));
+        });
+      });
+
+      // Symmetric difference: repos NOT accessible by ALL successfully-fetched tokens
+      const totalTokens = succeeded.length;
+      const diffRepos = [...repoMap.values()].filter(({ tokens }) => tokens.length < totalTokens);
+      const anyTruncated = settled.some(s => s.truncated);
+
+      _renderDiffRepos(col, diffRepos, settled, anyTruncated);
+    } catch (e) {
+      col.querySelector('.col-body').innerHTML =
+        `<div class="col-loading" style="color:var(--red)">Error: ${e.message}</div>`;
+    }
+  }
+
+  function _renderDiffRepos(col, diffRepos, results, anyTruncated) {
+    const totalTokens = results.filter(r => !r.error).length;
+    const logins = results.map(r => r.token.user?.login || r.token.token.slice(0, 8));
+
+    const countLabel = anyTruncated ? `${diffRepos.length}+` : diffRepos.length;
+    col.querySelector('.col-header span:first-child').textContent =
+      `🗂 DIFF (${countLabel} unique)`;
+
+    if (!diffRepos.length) {
+      col.querySelector('.col-body').innerHTML =
+        '<div class="empty-state">No unique repositories — all tokens share the same access</div>';
+      return;
+    }
+
+    const body = col.querySelector('.col-body');
+    body.innerHTML = '';
+
+    // Group by which token(s) own them
+    diffRepos.forEach(({ repo, tokens: accessors }) => {
+      const el = document.createElement('div');
+      el.className = 'repo-entry';
+      const [owner] = repo.full_name.split('/');
+
+      // Show which token(s) can access this repo
+      const accessTags = accessors.map(login =>
+        `<span class="diff-owner-tag">${_esc(login)}</span>`
+      ).join('');
+
+      el.innerHTML = `
+        <div class="repo-name">${_esc(repo.full_name)}</div>
+        <div class="repo-desc">${_esc(repo.description || '')}</div>
+        <div class="repo-meta">
+          ${repo.private ? '<span class="repo-private">🔒 private</span>' : '<span>🌐 public</span>'}
+          ${repo.fork ? '<span class="repo-fork">🍴 fork</span>' : ''}
+          <span>⭐ ${repo.stargazers_count}</span>
+          <span>${repo.language || ''}</span>
+        </div>
+        <div class="diff-access-row">only: ${accessTags}</div>
+      `;
+
+      // Use the first token that has access to browse this repo
+      const ownerToken = results.find(r =>
+        !r.error && (r.repos || []).some(rp => rp.full_name === repo.full_name)
+      );
+
+      el.addEventListener('click', () => {
+        col.querySelectorAll('.repo-entry').forEach(e => e.classList.remove('selected'));
+        el.classList.add('selected');
+        _clearFrom(1);
+        if (ownerToken) {
+          _token    = ownerToken.token.token;
+          _endpoint = ownerToken.token.endpoint;
+        }
+        loadContents(owner, repo.name, '');
+      });
+
+      body.appendChild(el);
+    });
+
+    // Fix 1: warn if any token's repo list was capped
+    if (anyTruncated) {
+      const notice = document.createElement('div');
+      notice.className = 'truncation-notice';
+      notice.textContent = '⚠ One or more tokens had results capped at 1 000 repos — diff may be incomplete.';
+      body.appendChild(notice);
+    }
+  }
+
+  return { loadToken, loadContents, loadFilePreview, loadCommits, loadDiff, clearRepos };
 })();

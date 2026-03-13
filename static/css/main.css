@@ -623,3 +623,57 @@ textarea::placeholder { color: var(--text-dim); }
   color: var(--amber);
   border-color: var(--amber);
 }
+
+/* ── Multi-select token list ─────────────────────────────────────── */
+.multi-select-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 4px 8px 8px;
+  font-style: italic;
+}
+.token-check {
+  width: 12px;
+  font-size: 11px;
+  color: var(--green);
+  flex-shrink: 0;
+}
+.token-item.selected .token-login {
+  color: var(--green);
+}
+
+/* ── Diff repo entries ───────────────────────────────────────────── */
+.diff-access-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.diff-owner-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: rgba(96,165,250,0.1);
+  color: var(--blue);
+  border: 1px solid var(--blue);
+}
+
+/* Issue 8: fine-grained PAT scope note */
+.scope-tag.scope-note {
+  color: var(--text-dim);
+  border-color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ── Repo truncation notice ──────────────────────────────────────── */
+.truncation-notice {
+  font-size: 10px;
+  color: var(--amber);
+  padding: 8px 10px;
+  border-top: 1px solid rgba(251,191,36,0.2);
+  margin-top: 4px;
+  text-align: center;
+}

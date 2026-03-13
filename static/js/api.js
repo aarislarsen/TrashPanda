@@ -39,13 +39,8 @@ const API = (() => {
     /** Fetch commit history (optionally scoped to file path) */
     commits: (token, endpoint, owner, repo, path = '') =>
       post('/api/commits', { token, endpoint, owner, repo, path }),
+
+    /** Check if a GitHub API endpoint is reachable (unauthenticated) */
+    ping: (endpoint) => post('/api/ping', { endpoint }),
   };
 })();
-
-// Patch: add ping method
-API.ping = (endpoint) =>
-  fetch('/api/ping', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ endpoint }),
-  }).then(r => r.json());
